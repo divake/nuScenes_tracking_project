@@ -1,0 +1,84 @@
+# Dataset files (too large for git)
+datasets/
+data/
+*.tar
+*.tar.gz
+*.zip
+
+# Model files (large binary files)
+models/
+*.pth
+*.ckpt
+*.pt
+*.h5
+*.pkl
+*.pickle
+
+# Preprocessed data (generated files)
+repos/CenterPoint/data/
+repos/CenterPoint/work_dirs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+env_py311/
+
+# Conda
+*.conda
+*.tar.bz2
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Large visualization outputs (optional - keep GIFs in git)
+# visualizations/detection_videos/*.gif
+
+# Backup files
+*.bak
+*.backup
