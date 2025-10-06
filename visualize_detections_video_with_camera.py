@@ -9,11 +9,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Polygon
 import matplotlib.animation as animation
 from nuscenes.nuscenes import NuScenes
-from nuscenes.utils.data_classes import LidarPointCloud, Box
+from nuscenes.utils.data_classes import LidarPointCloud, Box, RadarPointCloud
 from nuscenes.utils.geometry_utils import view_points
 from pyquaternion import Quaternion
 import torch
 from PIL import Image
+from sklearn.cluster import DBSCAN
 
 # Paths
 dataroot = '/mnt/ssd1/divake/nuScenes_tracking_project/datasets'
@@ -100,6 +101,73 @@ def render_box_on_image(ax, box_corners_2d, color, linewidth=2):
     draw_rect([0, 1, 2, 3], color)  # Bottom
     draw_rect([4, 5, 6, 7], color)  # Top
 
+def detect_objects_from_radar(radar_points, eps=3.0, min_samples=3):
+    """
+    Simple radar-based object detection using DBSCAN clustering
+
+    Args:
+        radar_points: Radar points array (N, 5) - [x, y, z, vx, vy]
+        eps: Maximum distance between points in a cluster
+        min_samples: Minimum number of points to form a cluster
+
+    Returns:
+        List of radar detections with bounding boxes
+    """
+    if len(radar_points) == 0:
+        return []
+
+    # Use only x, y for clustering (bird's eye view)
+    points_xy = radar_points[:, :2]
+
+    # DBSCAN clustering
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(points_xy)
+    labels = clustering.labels_
+
+    # Generate bounding boxes from clusters
+    radar_detections = []
+    unique_labels = set(labels)
+
+    for label in unique_labels:
+        if label == -1:  # Noise points
+            continue
+
+        # Get points in this cluster
+        cluster_mask = (labels == label)
+        cluster_points = radar_points[cluster_mask]
+
+        if len(cluster_points) < min_samples:
+            continue
+
+        # Compute bounding box from cluster
+        x_min, y_min = cluster_points[:, :2].min(axis=0)
+        x_max, y_max = cluster_points[:, :2].max(axis=0)
+
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        center_z = cluster_points[:, 2].mean()  # Average z
+
+        width = x_max - x_min + 1.0  # Add padding
+        length = y_max - y_min + 1.0
+        height = 1.5  # Default height for radar detections
+
+        # Compute average velocity
+        vx = cluster_points[:, 3].mean()
+        vy = cluster_points[:, 4].mean()
+
+        # Simple orientation from velocity
+        yaw = np.arctan2(vy, vx) if (vx**2 + vy**2) > 0.1 else 0.0
+
+        radar_detections.append({
+            'center': np.array([center_x, center_y, center_z]),
+            'size': np.array([width, length, height]),
+            'yaw': yaw,
+            'velocity': np.array([vx, vy]),
+            'num_points': len(cluster_points),
+            'class_name': 'object'  # Generic class for radar
+        })
+
+    return radar_detections
+
 def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
     """
     Visualize detections for a scene and create video
@@ -160,6 +228,30 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
         # Get LiDAR calibration
         lidar_calib = nusc.get('calibrated_sensor', lidar_data['calibrated_sensor_token'])
 
+        # Get Radar data from all 5 radars
+        radar_channels = ['RADAR_FRONT', 'RADAR_FRONT_LEFT', 'RADAR_FRONT_RIGHT',
+                         'RADAR_BACK_LEFT', 'RADAR_BACK_RIGHT']
+        all_radar_points = []
+        total_radar_points = 0
+        for radar_channel in radar_channels:
+            radar_token = sample['data'][radar_channel]
+            radar_data = nusc.get('sample_data', radar_token)
+            radar_filepath = os.path.join(dataroot, radar_data['filename'])
+            radar_pcl = RadarPointCloud.from_file(radar_filepath)
+            # Get x, y, z, vx, vy (indices 0, 1, 2, 6, 7)
+            radar_pts = radar_pcl.points[[0, 1, 2, 6, 7], :].T  # shape: (N, 5) - x, y, z, vx, vy
+            all_radar_points.append(radar_pts)
+            total_radar_points += radar_pts.shape[0]
+
+        # Concatenate all radar points
+        if all_radar_points:
+            radar_points = np.vstack(all_radar_points)
+        else:
+            radar_points = np.zeros((0, 5))
+
+        # Detect objects from radar using DBSCAN clustering
+        radar_detections = detect_objects_from_radar(radar_points, eps=3.0, min_samples=3)
+
         # Get predictions for this sample
         sample_preds = predictions.get(sample['token'], None)
 
@@ -215,7 +307,9 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
         log.write(f"Frame {i+1}/{scene['nbr_samples']}\n")
         log.write(f"  Sample token: {sample['token']}\n")
         log.write(f"  LiDAR points: {len(points):,}\n")
-        log.write(f"  Detections: {len(detections)}\n")
+        log.write(f"  Radar points: {total_radar_points} (from 5 radars)\n")
+        log.write(f"  LiDAR Detections: {len(detections)}\n")
+        log.write(f"  Radar Detections: {len(radar_detections)} (from clustering)\n")
 
         if len(detections) > 0:
             total_detections += len(detections)
@@ -237,6 +331,8 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
             'points': points,
             'detections': detections,
             'cam_image': cam_image,
+            'radar_points': radar_points,
+            'radar_detections': radar_detections,
             'sample_token': sample['token'],
             'frame_idx': i
         })
@@ -264,19 +360,23 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
 
     print(f"Log saved to: {log_file}")
 
-    # Create figure with two subplots
-    fig = plt.figure(figsize=(20, 8), dpi=120)
-    ax_lidar = plt.subplot(1, 2, 1)
-    ax_camera = plt.subplot(1, 2, 2)
+    # Create figure with three subplots (LiDAR, Camera, Radar)
+    fig = plt.figure(figsize=(30, 8), dpi=120)
+    ax_lidar = plt.subplot(1, 3, 1)
+    ax_camera = plt.subplot(1, 3, 2)
+    ax_radar = plt.subplot(1, 3, 3)
 
     def update_frame(frame_idx):
         ax_lidar.clear()
         ax_camera.clear()
+        ax_radar.clear()
 
         frame = frames_data[frame_idx]
         points = frame['points']
         detections = frame['detections']
         cam_image = frame['cam_image']
+        radar_points = frame['radar_points']
+        radar_detections = frame['radar_detections']
 
         # LEFT: LiDAR bird's eye view
         ax_lidar.scatter(points[:, 0], points[:, 1], c=points[:, 2],
@@ -323,6 +423,47 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
                            fontsize=12, fontweight='bold')
         ax_camera.axis('off')
 
+        # RIGHT: Radar bird's eye view
+        if len(radar_points) > 0:
+            # Plot radar points (swap X,Y for bird's eye view: Y=horizontal, X=vertical/forward)
+            ax_radar.scatter(radar_points[:, 1], radar_points[:, 0],
+                           c='cyan', s=20, alpha=0.8, marker='o', edgecolors='blue', linewidths=0.5)
+
+            # Plot velocity vectors (swap coordinates)
+            velocity_scale = 2.0  # Scale factor for visibility
+            for radar_pt in radar_points:
+                x, y, z, vx, vy = radar_pt
+                ax_radar.arrow(y, x, vy*velocity_scale, vx*velocity_scale,
+                             head_width=1.5, head_length=1.0, fc='yellow', ec='orange',
+                             alpha=0.6, linewidth=1)
+
+        # Show RADAR detection boxes (from clustering)
+        for det in radar_detections:
+            center = det['center']
+            size = det['size']
+            yaw = det['yaw']
+
+            corners = get_2d_box_corners(center, size, yaw)
+            # Swap X and Y coordinates for corners
+            corners_swapped = corners[:, [1, 0]]  # Swap columns
+            color = '#00FF00'  # Green for radar detections
+            poly = Polygon(corners_swapped, fill=False, edgecolor=color, linewidth=2, alpha=0.9)
+            ax_radar.add_patch(poly)
+
+            # Add label showing number of radar points in cluster (swap x,y)
+            ax_radar.text(center[1], center[0], f"{det['num_points']}pts",
+                         fontsize=8, ha='center', va='center',
+                         bbox=dict(boxstyle='round,pad=0.3', facecolor=color, alpha=0.6))
+
+        ax_radar.set_xlim([-50, 50])
+        ax_radar.set_ylim([-50, 50])
+        ax_radar.set_xlabel('Y - Left/Right (meters)', fontsize=10)
+        ax_radar.set_ylabel('X - Forward (meters)', fontsize=10)
+        ax_radar.set_title(f'Radar Detections (DBSCAN)\nClusters: {len(radar_detections)} from {len(radar_points)} points',
+                          fontsize=12, fontweight='bold')
+        ax_radar.grid(True, alpha=0.3)
+        ax_radar.set_aspect('equal')
+
         fig.suptitle(f'Scene {scene_idx} - Frame {frame_idx+1}/{len(frames_data)}',
                     fontsize=14, fontweight='bold')
 
@@ -335,7 +476,7 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
         try:
             Writer = animation.writers['ffmpeg']
             writer = Writer(fps=5, bitrate=2000, codec='h264')
-            output_file = os.path.join(output_dir, f'detections_scene_{scene_idx}_with_camera.mp4')
+            output_file = os.path.join(output_dir, f'detections_scene_{scene_idx}_lidar_camera_radar.mp4')
             anim.save(output_file, writer=writer, dpi=150)
             print(f"✓ Video saved to: {output_file}")
         except Exception as e:
@@ -344,7 +485,7 @@ def visualize_scene(scene_idx=0, num_frames=40, output_format='mp4'):
             output_format = 'gif'
 
     if output_format == 'gif':
-        output_file = os.path.join(output_dir, f'detections_scene_{scene_idx}.gif')
+        output_file = os.path.join(output_dir, f'detections_scene_{scene_idx}_lidar_camera_radar.gif')
         anim.save(output_file, writer='pillow', fps=5, dpi=150)
         print(f"✓ GIF saved to: {output_file}")
 
