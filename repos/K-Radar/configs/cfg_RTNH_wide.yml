@@ -32,19 +32,19 @@ DATASET:
   NUM: # Total number of frames, just make this blank
 
   path_data:
-    list_dir_kradar: ['/media/donghee/kradar/dataset']
+    list_dir_kradar: ['/mnt/ssd1/divake/nuScenes_tracking_project/repos/K-Radar/data/kradar_dataset']
     split: ['./resources/split/train.txt', './resources/split/test.txt']
     revised_label_v1_1: './tools/revise_label/kradar_revised_label_v1_1'
-    revised_label_v2_0: './tools/revise_label/kradar_revised_label_v2_0/KRadar_refined_label_by_UWIPL'
+    revised_label_v2_0: './tools/revise_label/KRadar_refined_label_by_UWIPL'
     revised_label_v2_1: './tools/revise_label/kradar_revised_label_v2_1/KRadar_revised_visibility'
   label_version: 'v2_0'
   item: {
     'calib': True,
-    'ldr64': False,
+    'ldr64': True,
     'ldr128': False,
-    'rdr': False,
+    'rdr': True,
     'rdr_sparse': True,
-    'cam': False,
+    'cam': True,
   }
   calib: {
     'z_offset': 0.7
@@ -61,7 +61,7 @@ DATASET:
   }
   rdr_sparse: {
     'processed': True,
-    'dir': '/media/donghee/kradar/rdr_sparse_data/rtnh_wider_1p_1'
+    'dir': '/mnt/ssd1/divake/nuScenes_tracking_project/repos/K-Radar/data/rdr_sparse_data/rtnh_wider_10p_1'
   }
   roi: {
     'filter': True,

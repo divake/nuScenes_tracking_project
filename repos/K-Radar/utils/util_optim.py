@@ -1,7 +1,9 @@
 import warnings
 import torch
-from torch._six import inf
+import math
 from typing import Union, Iterable
+
+inf = math.inf
 
 _tensor_or_tensors = Union[torch.Tensor, Iterable[torch.Tensor]]
 
