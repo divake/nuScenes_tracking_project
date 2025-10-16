@@ -83,6 +83,9 @@ temp/
 repos/K-Radar/logs/
 repos/K-Radar/output_detections/*.png
 repos/K-Radar/output_tracking/frame_*.png
+repos/K-Radar/demo_3panel/frame_*.png
+repos/K-Radar/demo_visualization/
+repos/K-Radar/create_demo_visualization.py
 repos/K-Radar/tools/revise_label/KRadar_refined_label_by_UWIPL/
 repos/K-Radar/data/
 
